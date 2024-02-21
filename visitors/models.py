@@ -18,10 +18,23 @@ class InvalidVisitorPass(Exception):
     pass
 
 
+class VisitorManager(models.Manager):
+    def get_and_update(self, uuid: int) -> Visitor:
+        """Get a temporary visitor by uuid and decrement uses_remaining."""
+        visitor = self.select_for_update().get(uuid=uuid)
+        visitor.validate()
+        if visitor.max_uses is not None:
+            visitor.uses_remaining -= 1
+            visitor.save(update_fields=["uses_remaining"])
+        return visitor
+
+
 class Visitor(models.Model):
     """A temporary visitor (betwixt anonymous and authenticated)."""
 
     DEFAULT_TOKEN_EXPIRY = datetime.timedelta(seconds=VISITOR_TOKEN_EXPIRY)
+
+    objects = VisitorManager()
 
     uuid = models.UUIDField(default=uuid.uuid4)
     first_name = models.CharField(max_length=150, blank=True)
@@ -51,6 +64,8 @@ class Visitor(models.Model):
             "Set to False to disable the visitor link and prevent further access."
         ),
     )
+    max_uses = models.PositiveIntegerField(null=True)
+    uses_remaining = models.PositiveIntegerField(null=True)
 
     class Meta:
         verbose_name = "Visitor pass"
@@ -62,13 +77,17 @@ class Visitor(models.Model):
     def __repr__(self) -> str:
         return (
             f"<Visitor id={self.id} uuid='{self.uuid}' "
-            f"email='{self.email}' scope='{self.scope}'>"
+            f"email='{self.email}' scope='{self.scope}' "
+            f"uses_remaining={self.uses_remaining}>"
         )
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         if not self.expires_at:
             self.expires_at = self.created_at + self.DEFAULT_TOKEN_EXPIRY
+        if self.max_uses is not None and self.uses_remaining is None:
+            # Default uses_remaining to the maximum
+            self.uses_remaining = self.max_uses
 
     @property
     def full_name(self) -> str:
@@ -86,9 +105,16 @@ class Visitor(models.Model):
         return self.expires_at < tz_now()
 
     @property
+    def out_of_uses(self) -> bool:
+        """If using max_uses ensure uses remaining is greater than zero."""
+        if self.max_uses is None:
+            return False
+        return self.uses_remaining == 0
+
+    @property
     def is_valid(self) -> bool:
         """Return True if the token is active and not yet expired."""
-        return self.is_active and not self.has_expired
+        return self.is_active and not self.has_expired and not self.out_of_uses
 
     def validate(self) -> None:
         """Raise InvalidVisitorPass if inactive or expired."""
@@ -96,6 +122,10 @@ class Visitor(models.Model):
             raise InvalidVisitorPass("Visitor pass is inactive")
         if self.has_expired:
             raise InvalidVisitorPass("Visitor pass has expired")
+        if self.out_of_uses:
+            raise InvalidVisitorPass(
+                "Visitor pass has already been used the maximum number of times"
+            )
 
     def serialize(self) -> dict:
         """
@@ -132,6 +162,7 @@ class Visitor(models.Model):
         """Reactivate the token so it can be reused."""
         self.is_active = True
         self.expires_at = tz_now() + self.DEFAULT_TOKEN_EXPIRY
+        self.uses_remaining = self.max_uses
         self.save()
 
 

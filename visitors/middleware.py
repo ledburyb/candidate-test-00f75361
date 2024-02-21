@@ -28,8 +28,8 @@ class VisitorRequestMiddleware:
         if not visitor_uuid:
             return self.get_response(request)
         try:
-            visitor = Visitor.objects.get(uuid=visitor_uuid)
-            visitor.validate()
+            # Updates the number of uses remaining of the visitor token
+            visitor = Visitor.objects.get_and_update(uuid=visitor_uuid)
         except Visitor.DoesNotExist:
             logger.debug("Visitor pass does not exist: %s", visitor_uuid)
             return self.get_response(request)
@@ -39,6 +39,7 @@ class VisitorRequestMiddleware:
         else:
             request.visitor = visitor
             request.user.is_visitor = True
+
         return self.get_response(request)
 
 

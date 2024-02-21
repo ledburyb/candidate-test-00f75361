@@ -13,7 +13,7 @@ from visitors.settings import VISITOR_SESSION_KEY
 
 @pytest.fixture
 def visitor() -> Visitor:
-    return Visitor.objects.create(email="fred@example.com", scope="foo")
+    return Visitor.objects.create(email="fred@example.com", scope="foo", max_uses=1)
 
 
 class Session(dict):
@@ -66,6 +66,12 @@ class TestVisitorRequestMiddleware(TestVisitorMiddlewareBase):
         middleware(request)
         assert request.user.is_visitor
         assert request.visitor == visitor
+
+    def test_max_uses_updated(self, visitor: Visitor) -> None:
+        request = self.request(visitor.tokenise("/"))
+        middleware = VisitorRequestMiddleware(lambda r: r)
+        middleware(request)
+        assert request.visitor.uses_remaining == 0
 
 
 @pytest.mark.django_db

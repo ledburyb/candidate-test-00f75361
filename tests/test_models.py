@@ -39,7 +39,11 @@ def test_deactivate():
 @pytest.mark.django_db
 def test_reactivate():
     visitor = Visitor.objects.create(
-        email="foo@bar.com", is_active=False, expires_at=YESTERDAY
+        email="foo@bar.com",
+        is_active=False,
+        expires_at=YESTERDAY,
+        max_uses=2,
+        uses_remaining=1,
     )
     assert not visitor.is_active
     assert visitor.has_expired
@@ -52,6 +56,7 @@ def test_reactivate():
     assert visitor.is_active
     assert not visitor.has_expired
     assert visitor.is_valid
+    assert visitor.uses_remaining == visitor.max_uses
 
 
 @pytest.mark.parametrize(
@@ -108,3 +113,20 @@ def test_has_expired(expires_at, has_expired):
     visitor = Visitor()
     visitor.expires_at = expires_at
     assert visitor.has_expired == has_expired
+
+
+@pytest.mark.parametrize(
+    "max_uses,uses_remaining,is_valid",
+    (
+        (1, 0, False),
+        (1, 1, True),
+        (None, None, True),
+    ),
+)
+def test_max_uses(max_uses, uses_remaining, is_valid):
+    visitor = Visitor(max_uses=max_uses, uses_remaining=uses_remaining)
+    if is_valid:
+        visitor.validate()
+        return
+    with pytest.raises(InvalidVisitorPass):
+        visitor.validate()
